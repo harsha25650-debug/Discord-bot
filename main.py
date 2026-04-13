@@ -1,169 +1,92 @@
 import discord
-from discord.ext import commands
-import asyncio
+from discord import app_commands
+import os
 import datetime
+import random
 
 TOKEN = os.getenv("TOKEN")
 
-# ---------------- CONFIG ----------------
-TOKEN = "YOUR_BOT_TOKEN"
-DEFAULT_PREFIX = "!"
-
 intents = discord.Intents.all()
+client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
 
-# ---------------- PREFIX SYSTEM (per server) ----------------
+# ---------------- PREFIX SYSTEM ---------------- #
 prefixes = {}
 
-def get_prefix(bot, message):
-    return prefixes.get(message.guild.id, DEFAULT_PREFIX)
+def get_prefix(guild_id):
+    return prefixes.get(guild_id, "!")
 
-# ---------------- BOT ----------------
-class NovaX(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix=get_prefix,
-            intents=intents
-        )
-
-    async def setup_hook(self):
-        await self.tree.sync()
-        print("Slash commands synced")
-
-bot = NovaX()
-
-# ---------------- CASE LOG SYSTEM ----------------
+# ---------------- CASE LOG ---------------- #
 async def log_case(guild, text):
     channel = discord.utils.get(guild.text_channels, name="mod-logs")
     if channel:
         await channel.send(text)
 
-# ---------------- READY ----------------
-@bot.event
+# ---------------- READY EVENT ---------------- #
+@client.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    await tree.sync()
+    print(f"Logged in as {client.user}")
+    print("Bot is online and ready.")
 
-# ---------------- ERROR HANDLER (ZEP STYLE) ----------------
-@bot.event
-async def on_command_error(ctx, error):
+# ---------------- HELP COMMAND ---------------- #
+@tree.command(name="help", description="Show bot help menu")
+async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="❌ Command Error",
-        description=f"Error: `{str(error)}`\n\n"
-                    "📌 Check command spelling\n"
-                    "📌 Use !help to see correct commands\n"
-                    "📌 Example: !ban @user reason",
-        color=discord.Color.red()
-    )
-    await ctx.send(embed=embed)
-
-# ---------------- HELP PANEL ----------------
-@bot.command()
-async def help(ctx):
-    embed = discord.Embed(
-        title="📌 NovaX Help Panel",
+        title="📌 Bot Help Panel",
         description="""
 Moderation:
-!ban, !unban, !kick, !mute, !unmute, !nick
+/kick /ban /unban /mute /unmute /clear
 
 Utility:
-!say, !dm, !clear, !inviteinfo
+/say /dm /nick /inviteinfo
 
 System:
-!prefix, !afk, !giveaway
-""",
+/prefix /afk /giveaway
+        """,
         color=discord.Color.blue()
     )
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-# ---------------- MODERATION ----------------
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="No reason"):
-    await member.ban(reason=reason)
-    await ctx.send(f"🔨 Banned {member}")
+# ---------------- SAY ---------------- #
+@tree.command(name="say", description="Send a message as bot")
+async def say(interaction: discord.Interaction, message: str):
+    await interaction.response.send_message(message)
 
-    await log_case(ctx.guild, f"BAN | {member} | {reason}")
+# ---------------- DM ---------------- #
+@tree.command(name="dm", description="Send DM to a user")
+async def dm(interaction: discord.Interaction, member: discord.Member, message: str):
+    await member.send(message)
+    await interaction.response.send_message("✔ DM sent", ephemeral=True)
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def unban(ctx, user_id: int):
-    user = await bot.fetch_user(user_id)
-    await ctx.guild.unban(user)
-    await ctx.send(f"✅ Unbanned {user}")
-
-    await log_case(ctx.guild, f"UNBAN | {user}")
-
-@bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="No reason"):
-    await member.kick(reason=reason)
-    await ctx.send(f"👢 Kicked {member}")
-
-    await log_case(ctx.guild, f"KICK | {member} | {reason}")
-
-# ---------------- MUTE / UNMUTE ----------------
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, time: int = 10):
-    await member.timeout(datetime.timedelta(minutes=time))
-    await ctx.send(f"🔇 Muted {member} for {time} minutes")
-
-    await log_case(ctx.guild, f"MUTE | {member} | {time} min")
-
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def unmute(ctx, member: discord.Member):
-    await member.timeout(None)
-    await ctx.send(f"🔊 Unmuted {member}")
-
-    await log_case(ctx.guild, f"UNMUTE | {member}")
-
-# ---------------- NICK CHANGE ----------------
-@bot.command()
-@commands.has_permissions(manage_nicknames=True)
-async def nick(ctx, member: discord.Member, *, name):
+# ---------------- NICK ---------------- #
+@tree.command(name="nick", description="Change nickname")
+@app_commands.checks.has_permissions(manage_nicknames=True)
+async def nick(interaction: discord.Interaction, member: discord.Member, name: str):
     await member.edit(nick=name)
-    await ctx.send(f"📝 Nick changed for {member}")
+    await interaction.response.send_message(f"✔ Nick changed for {member}")
 
-# ---------------- SAY ----------------
-@bot.command()
-async def say(ctx, *, msg):
-    await ctx.message.delete()
-    await ctx.send(msg)
+# ---------------- INVITE INFO ---------------- #
+@tree.command(name="inviteinfo", description="Show server invite count")
+async def inviteinfo(interaction: discord.Interaction):
+    invites = await interaction.guild.invites()
+    await interaction.response.send_message(f"🔗 Total invites: {len(invites)}")
 
-# ---------------- DM COMMAND ----------------
-@bot.command()
-async def dm(ctx, member: discord.Member, *, msg):
-    await member.send(msg)
-    await ctx.send("📩 Message sent")
+# ---------------- PREFIX CHANGE ---------------- #
+@tree.command(name="prefix", description="Change server prefix (prefix system demo)")
+async def prefix(interaction: discord.Interaction, new_prefix: str):
+    prefixes[interaction.guild.id] = new_prefix
+    await interaction.response.send_message(f"✔ Prefix changed to `{new_prefix}`")
 
-# ---------------- CLEAR ----------------
-@bot.command()
-@commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: int):
-    await ctx.channel.purge(limit=amount + 1)
-    await ctx.send(f"🧹 Deleted {amount} messages", delete_after=3)
-
-# ---------------- PREFIX CHANGE ----------------
-@bot.command()
-async def prefix(ctx, new_prefix):
-    prefixes[ctx.guild.id] = new_prefix
-    await ctx.send(f"⚙️ Prefix changed to `{new_prefix}`")
-
-# ---------------- INVITE INFO ----------------
-@bot.command()
-async def inviteinfo(ctx):
-    invites = await ctx.guild.invites()
-    await ctx.send(f"🔗 Total invites: {len(invites)}")
-
-# ---------------- AFK SYSTEM ----------------
+# ---------------- AFK SYSTEM ---------------- #
 afk_users = {}
 
-@bot.command()
-async def afk(ctx, *, reason="AFK"):
-    afk_users[ctx.author.id] = reason
-    await ctx.send(f"😴 You are AFK: {reason}")
+@tree.command(name="afk", description="Set AFK status")
+async def afk(interaction: discord.Interaction, reason: str = "AFK"):
+    afk_users[interaction.user.id] = reason
+    await interaction.response.send_message(f"😴 You are AFK: {reason}")
 
-@bot.event
+@client.event
 async def on_message(message):
     if message.author.bot:
         return
@@ -176,31 +99,86 @@ async def on_message(message):
         if user.id in afk_users:
             await message.channel.send(f"😴 {user} is AFK: {afk_users[user.id]}")
 
-    await bot.process_commands(message)
+# ---------------- MODERATION ---------------- #
+@tree.command(name="kick", description="Kick a member")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+    await member.kick(reason=reason)
+    await interaction.response.send_message(f"✔ Kicked {member}")
+    await log_case(interaction.guild, f"KICK | {member} | {reason}")
 
-# ---------------- GIVEAWAY (SIMPLE) ----------------
-@bot.command()
-async def giveaway(ctx, time: int, *, prize):
-    msg = await ctx.send(f"🎉 Giveaway: {prize}\nReact 🎉 to join!")
+@tree.command(name="ban", description="Ban a member")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"✔ Banned {member}")
+    await log_case(interaction.guild, f"BAN | {member} | {reason}")
+
+@tree.command(name="unban", description="Unban user by ID")
+@app_commands.checks.has_permissions(ban_members=True)
+async def unban(interaction: discord.Interaction, user_id: str):
+    user = await client.fetch_user(int(user_id))
+    await interaction.guild.unban(user)
+    await interaction.response.send_message(f"✔ Unbanned {user}")
+    await log_case(interaction.guild, f"UNBAN | {user}")
+
+@tree.command(name="clear", description="Delete messages")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def clear(interaction: discord.Interaction, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("⚠ Invalid number", ephemeral=True)
+        return
+
+    await interaction.channel.purge(limit=amount)
+    await interaction.response.send_message(f"✔ Deleted {amount} messages", ephemeral=True)
+
+@tree.command(name="mute", description="Timeout a member")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int):
+    until = discord.utils.utcnow() + datetime.timedelta(minutes=minutes)
+    await member.timeout(until)
+    await interaction.response.send_message(f"✔ Muted {member} for {minutes} minutes")
+    await log_case(interaction.guild, f"MUTE | {member} | {minutes} min")
+
+@tree.command(name="unmute", description="Remove timeout")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def unmute(interaction: discord.Interaction, member: discord.Member):
+    await member.timeout(None)
+    await interaction.response.send_message(f"✔ Unmuted {member}")
+    await log_case(interaction.guild, f"UNMUTE | {member}")
+
+# ---------------- GIVEAWAY ---------------- #
+@tree.command(name="giveaway", description="Start giveaway")
+async def giveaway(interaction: discord.Interaction, time: int, prize: str):
+    msg = await interaction.channel.send(f"🎉 Giveaway: {prize}\nReact 🎉 to join!")
 
     await msg.add_reaction("🎉")
-    await asyncio.sleep(time)
+    await interaction.response.send_message("✔ Giveaway started", ephemeral=True)
 
-    new_msg = await ctx.channel.fetch_message(msg.id)
+    await discord.utils.sleep_until(discord.utils.utcnow() + datetime.timedelta(seconds=time))
+
+    new_msg = await interaction.channel.fetch_message(msg.id)
     users = await new_msg.reactions[0].users().flatten()
-
     users = [u for u in users if not u.bot]
 
     if users:
         winner = random.choice(users)
-        await ctx.send(f"🏆 Winner: {winner.mention}")
+        await interaction.channel.send(f"🏆 Winner: {winner.mention}")
     else:
-        await ctx.send("❌ No participants")
+        await interaction.channel.send("❌ No participants")
 
-# ---------------- SLASH COMMAND EXAMPLE ----------------
-@bot.tree.command(name="ping")
-async def slash_ping(interaction: discord.Interaction):
-    await interaction.response.send_message("Pong!")
+# ---------------- ERROR HANDLER ---------------- #
+@kick.error
+@ban.error
+@unban.error
+@clear.error
+@mute.error
+@unmute.error
+async def error_handler(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
 
-# ---------------- RUN ----------------
-bot.run(TOKEN)
+# ---------------- RUN ---------------- #
+client.run(TOKEN)
